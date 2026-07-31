@@ -1,0 +1,303 @@
+{
+  "name": "Model Routing Governor v3 — Demo",
+  "nodes": [
+    {
+      "id": "48f09568-51d3-49a1-99bb-299818528f59",
+      "name": "Ogni settimana",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 4,
+              "weeksInterval": 1,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "e6d96758-fe92-41f1-b3f2-28400ad6b429",
+      "name": "Read host inventory",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "position": [
+        220,
+        110
+      ],
+      "parameters": {
+        "tool": {
+          "__rl": true,
+          "mode": "id",
+          "value": "read_note"
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "inputMode": "json",
+        "jsonInput": "{\"note_ref\":\"03-INFRA/council-model-inventory.md\"}",
+        "endpointUrl": "https://YOUR_MCP_HOST/YOUR_MCP_PATH",
+        "authentication": "bearerAuth",
+        "serverTransport": "httpStreamable"
+      },
+      "retryOnFail": true,
+      "typeVersion": 1
+    },
+    {
+      "id": "eccf2395-3900-4fce-989a-6eb31f816db1",
+      "name": "Fetch AA catalog",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        440,
+        110
+      ],
+      "parameters": {
+        "url": "https://artificialanalysis.ai/api/v2/data/llms/models",
+        "method": "GET",
+        "options": {
+          "timeout": 60000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": true,
+      "typeVersion": 4.4
+    },
+    {
+      "id": "b5c694ae-f4f7-43fd-b4cf-1e611b3b810d",
+      "name": "Build catalog",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        660,
+        110
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Inventario (dal vault, pubblicato dai PC) x punteggi (da AA).\nconst note = $('Read host inventory').first().json;\n// Il nodo MCP incarta la risposta: { content: [ { type: 'text', text: <nota> } ] },\n// e `text` arriva GIA' come oggetto, non come stringa JSON. Senza sbucciare,\n// String(note.content) diventa '[object Object]' e nessun blocco host viene\n// trovato -- che e' esattamente come questo bug si e' manifestato.\nconst rawNote = (note.content && note.content[0] && note.content[0].text) || note;\nconst payload = typeof rawNote === 'string' ? JSON.parse(rawNote) : rawNote;\nconst body = String(payload.full_content || payload.content || '');\nif (!body.trim()) throw new Error('Nota inventario vuota o illeggibile');\nconst aa = $input.first().json;\nconst models = Array.isArray(aa.data) ? aa.data : [];\nif (models.length < 50) throw new Error('Catalogo AA sospetto: ' + models.length + ' modelli');\n\nconst hosts = {};\nconst blockRe = /<!-- model-inventory:([^:]+):start -->([\\s\\S]*?)<!-- model-inventory:\\1:end -->/g;\nlet bm;\nwhile ((bm = blockRe.exec(body))) {\n  const chans = {};\n  const lineRe = /^-\\s+\\*\\*([a-z]+)\\*\\*[^:]*:\\s*(.+)$/gm;\n  let lm;\n  while ((lm = lineRe.exec(bm[2]))) {\n    const list = [...lm[2].matchAll(/`([^`]+)`/g)].map(x => x[1]);\n    if (list.length) chans[lm[1]] = list;\n  }\n  hosts[bm[1]] = chans;\n}\nif (!Object.keys(hosts).length) throw new Error('Nessun blocco host nella nota');\n\n// AA usa un vocabolario di suffissi ricco: va spogliato prima del confronto.\nconst EFFORT = /\\s+\\((?:adaptive\\s+)?(?:non-)?reasoning(?:,\\s*[a-z]+\\s+effort)?(?:,\\s*[^)]*fallback)?\\)$/i;\nconst LEVEL = /\\s+\\((?:max|xhigh|high|medium|low|minimal|with fallback|preview)\\)$/i;\nconst DATED = /\\s+\\((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\s*'?\\d{2}\\)$/i;\nconst BARE = /\\s+Preview$/i;\nfunction canonical(v) {\n  let o = String(v || '').trim();\n  for (let i = 0; i < 4; i += 1) {\n    const b = o;\n    o = o.replace(EFFORT, '').replace(LEVEL, '').replace(DATED, '').replace(BARE, '').trim();\n    if (o === b) break;\n  }\n  return o;\n}\nconst norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');\nconst index = new Map();\nfor (const m of models) {\n  const sc = m.evaluations && m.evaluations.artificial_analysis_intelligence_index;\n  if (!Number.isFinite(sc)) continue;\n  const k = norm(canonical(m.name));\n  const p = index.get(k);\n  if (!p || p.evaluations.artificial_analysis_intelligence_index < sc) index.set(k, m);\n}\n// Un tag build a 4 cifre in coda ('DeepSeek V4 Flash 0731') e' la stessa\n// famiglia dello slug generico che il CLI espone: il vendor serve la build\n// corrente. Si fondono SOLO se la variante base esiste davvero, altrimenti\n// 'R1 1776' -- dove 1776 e' parte del nome, non una data -- verrebbe rinominato.\nfor (const [k, m] of [...index]) {\n  const base = norm(canonical(m.name).replace(/\\s+\\d{4}$/, ''));\n  if (base === k || !index.has(base)) continue;\n  const cur = index.get(base);\n  if (cur.evaluations.artificial_analysis_intelligence_index < m.evaluations.artificial_analysis_intelligence_index) index.set(base, m);\n}\nconst SLUG = /-(high|medium|low|max|xhigh|minimal|thinking|reasoning|free|code|mini)$/;\nfunction lookup(slug) {\n  let b = String(slug).split('/').pop().trim();\n  for (let i = 0; i < 4; i += 1) {\n    const hit = index.get(norm(b));\n    if (hit) return hit;\n    const s = b.replace(SLUG, '');\n    if (s === b) break;\n    b = s;\n  }\n  return null;\n}\n\nconst inv = new Map(); const unmatched = [];\nfor (const [host, chans] of Object.entries(hosts)) {\n  for (const [cli, slugs] of Object.entries(chans)) {\n    for (const slug of slugs) {\n      if (cli === 'local') {\n        // I locali non stanno in AA: il loro valore non e' la classifica.\n        const k = 'local|' + slug;\n        if (!inv.has(k)) inv.set(k, { name: slug, cli: 'local', exposed: slug, host, idx: null, price: 0, tps: null, ev: {} });\n        continue;\n      }\n      const hit = lookup(slug);\n      if (!hit) { unmatched.push(cli + '/' + slug); continue; }\n      const c = canonical(hit.name); const k = cli + '|' + c;\n      if (inv.has(k)) continue;\n      const pr = hit.pricing || {};\n      inv.set(k, { name: c, cli, exposed: slug, host, idx: hit.evaluations.artificial_analysis_intelligence_index, price: pr.price_1m_blended_3_to_1, tps: hit.median_output_tokens_per_second, ev: hit.evaluations });\n    }\n  }\n}\n\n// Pavimento: un MODELLO di riferimento, non una soglia scelta a mano. Si alza\n// da se' quando il canale aggiorna la build.\nconst ref = [...inv.values()].find(m => /^DeepSeek V4 Flash/i.test(m.name));\nconst FLOOR = ref && Number.isFinite(ref.idx) ? ref.idx : 40;\nconst cloud = [...inv.values()].filter(m => m.cli !== 'local' && Number.isFinite(m.idx));\nconst catalog = cloud.filter(m => m.idx >= FLOOR).sort((a, b) => b.idx - a.idx);\nconst cut = cloud.filter(m => m.idx < FLOOR).sort((a, b) => b.idx - a.idx);\nconst locals = [...inv.values()].filter(m => m.cli === 'local');\n\nfunction fnv(s) { let h = 2166136261; for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); }\nconst fingerprint = fnv(catalog.map(m => m.cli + ':' + m.name + ':' + m.idx + ':' + m.price).sort().join('|') + '#' + locals.map(m => m.name).sort().join('|'));\n\nreturn [{ json: { catalog, locals, cut, floor: FLOOR, floor_model: ref ? ref.name : '(assente)', hosts: Object.keys(hosts), aa_total: models.length, unmatched, fingerprint } }];\n",
+        "language": "javaScript"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "8e707b3d-b865-41bf-aebd-d6cf6dcac575",
+      "name": "Route roles",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        880,
+        110
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Ogni ruolo ha i SUOI test e la SUA politica di costo.\n// Il perche' di ognuno: 03-INFRA/model-routing-roles.md\nconst inp = $input.first().json;\nconst catalog = inp.catalog || []; const locals = inp.locals || [];\nconst P = { Q: 'quality-first', R: 'ratio', C: 'cheap-first' };\nconst ROLES = [\n  { id: 'L-Arch', data: 'none', profile: P.Q, tests: { lcr: 0.5, hle: 0.3, gpqa: 0.2 }, purpose: 'Architettura, requisiti, design multi-sistema, documenti lunghi' },\n  { id: 'L-Debug', data: 'none', profile: P.Q, tests: { terminalbench_v2_1: 0.35, hle: 0.35, lcr: 0.3 }, purpose: 'Diagnosi: bug difficili, tracce, comportamenti che non tornano' },\n  { id: 'L-Sys', data: 'infra', profile: P.Q, tests: { terminalbench_v2_1: 0.8, terminalbench_hard: 0.2 }, purpose: 'Infrastruttura, Docker, SSH, incidenti' },\n  { id: 'L-Code', data: 'none', profile: P.R, tests: { artificial_analysis_coding_index: 0.7, terminalbench_v2_1: 0.3 }, purpose: 'Patch quotidiane, shell, debug medio' },\n  { id: 'L-Build', data: 'none', profile: P.R, tests: { tau_banking: 0.45, tau2: 0.35, terminalbench_v2_1: 0.2 }, purpose: 'n8n complesso, tool chaining, refactor multi-file' },\n  { id: 'Frontend', data: 'none', profile: P.R, tests: { artificial_analysis_coding_index: 1 }, purpose: 'Componenti UI, CSS' },\n  { id: 'L-Write', data: 'none', profile: P.R, tests: { ifbench: 1 }, purpose: 'Prosa: note, contenuti, candidature, documentazione' },\n  { id: 'L-Bulk', data: 'none', profile: P.C, tests: { ifbench: 1 }, purpose: 'Estrazioni, triage, scan, trasformazioni ripetitive' },\n  { id: 'Privacy', data: 'personal', profile: P.Q, tests: { artificial_analysis_intelligence_index: 1 }, purpose: 'NDA, dati personali, lavoro che non deve uscire dalla macchina' },\n];\n// Priori d'uso dove nessun benchmark e' pertinente. L-Write vuoto di proposito:\n// quale modello scriva un buon italiano e' esperienza d'uso, non un numero.\nconst PRIOR = { Frontend: [[/GLM/i, 50], [/Terra/i, 36], [/Opus/i, 30]], 'L-Write': [] };\n// INDEX_MAX deve stare SOPRA il massimo del catalogo, o i migliori collassano\n// sullo stesso valore e vince quello che costa più'.\nconst INDEX_MAX = 80; const SPEED_MAX = 250; const W_SPEED = 0.1;\nconst INTERACTIVE = new Set(['L-Code', 'L-Build', 'L-Sys', 'Frontend', 'L-Bulk', 'L-Write']);\n// Scala ASSOLUTA: il min-max relativo schiaccia il più' debole a zero e fa\n// eleggere al profilo rapporto il modello più' caro.\nfunction abs(f, raw) {\n  if (!Number.isFinite(raw)) return null;\n  const pct = f.endsWith('_index') ? (raw / INDEX_MAX) * 100 : raw * 100;\n  return Math.max(0, Math.min(100, pct));\n}\nfunction median(vals) {\n  const v = vals.filter(Number.isFinite).sort((a, b) => a - b);\n  if (!v.length) return null;\n  const m = Math.floor(v.length / 2);\n  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;\n}\n// Un termine assente vale la MEDIANA: scartarlo e ripesare premia chi non ha\n// la misura, quando il valore presente e' sotto la media.\nfunction blend(parts) {\n  let s = 0, w = 0;\n  for (const [v, weight, fb] of parts) {\n    const x = Number.isFinite(v) ? v : (Number.isFinite(fb) ? fb : null);\n    if (x === null) continue;\n    s += x * weight; w += weight;\n  }\n  return w > 0 ? s / w : 0;\n}\nfunction prior(id, m) { for (const [re, val] of PRIOR[id] || []) if (re.test(m.name)) return val; return 0; }\nfunction roleScore(role, m) {\n  let s = 0, w = 0; const missing = [];\n  for (const [f, weight] of Object.entries(role.tests)) {\n    const v = abs(f, m.ev ? m.ev[f] : null);\n    if (v === null) { missing.push(f); continue; }\n    s += v * weight; w += weight;\n  }\n  if (w === 0) return { value: prior(role.id, m), missing };\n  return { value: s / w, missing };\n}\nfunction speed(role, m) {\n  if (!INTERACTIVE.has(role.id)) return null;\n  const t = Number(m.tps);\n  return Number.isFinite(t) && t > 0 ? Math.min(100, (t / SPEED_MAX) * 100) : null;\n}\nconst out = [];\nfor (const role of ROLES) {\n  // Dati personali: SOLO locale, nessun ripiego cloud.\n  const cands = role.data === 'personal' ? locals : catalog;\n  if (!cands.length) {\n    out.push({ role, eligible: 0, picks: [], pools: [], unassigned: role.data === 'personal' ? 'nessun modello locale sugli host che hanno pubblicato: il ruolo resta non assegnato invece di ricadere su un cloud' : 'nessun candidato' });\n    continue;\n  }\n  const spMed = median(cands.map(m => speed(role, m)));\n  const scored = cands.map(m => {\n    const rs = roleScore(role, m);\n    const q = abs('artificial_analysis_intelligence_index', m.idx);\n    const sp = speed(role, m);\n    let total, why;\n    if (role.profile === P.Q) {\n      total = blend([[q, 0.45], [rs.value, 0.45], [sp, W_SPEED, spMed]]);\n      why = 'qualita ' + (q === null ? 'n/d' : q.toFixed(0)) + ' + ruolo ' + rs.value.toFixed(0) + ', costo escluso';\n    } else if (role.profile === P.R) {\n      const merit = blend([[q, 0.45], [rs.value, 0.45], [sp, W_SPEED, spMed]]);\n      const p = Math.max(Number.isFinite(m.price) ? m.price : 99, 0.05);\n      total = merit / Math.log10(1 + p * 20);\n      why = 'merito ' + merit.toFixed(0) + ' / $' + p + ' = ' + total.toFixed(1) + ' per dollaro';\n    } else {\n      total = blend([[rs.value, 0.9], [sp, W_SPEED, spMed]]);\n      why = 'costo $' + m.price + ' (chiave 1), qualita ' + total.toFixed(0) + ' (chiave 2)';\n    }\n    return { m, rs, total, why };\n  });\n  if (role.profile === P.C) {\n    // Prima il prezzo, POI la qualita': due chiavi in ordine, non una media.\n    scored.sort((a, b) => {\n      const pa = Number.isFinite(a.m.price) ? a.m.price : 99;\n      const pb = Number.isFinite(b.m.price) ? b.m.price : 99;\n      return pa !== pb ? pa - pb : b.total - a.total;\n    });\n  } else {\n    scored.sort((a, b) => b.total - a.total);\n  }\n  // Fallback su POOL DI QUOTA distinti: a quota esaurita un pool sparisce\n  // tutto insieme, quindi tre modelli sullo stesso canale sono un modello.\n  const picks = [];\n  for (const s of scored) {\n    if (!picks.length) { picks.push(s); continue; }\n    if (picks.length < 3 && !picks.some(p => p.m.cli === s.m.cli)) picks.push(s);\n    if (picks.length === 3) break;\n  }\n  for (const s of scored) { if (picks.length === 3) break; if (!picks.includes(s)) picks.push(s); }\n  const pools = [...new Set(picks.map(p => p.m.cli))];\n  out.push({ role, eligible: cands.length, pools, pool_warning: pools.length < 3 ? 'solo ' + pools.length + ' pool distinti' : null,\n    picks: picks.map((p, i) => ({ slot: ['primario', 'fallback 1', 'fallback 2'][i], name: p.m.name, cli: p.m.cli, exposed: p.m.exposed, price: p.m.price, idx: p.m.idx, tps: p.m.tps, score: Number(p.total.toFixed(2)), why: p.why, missing: p.rs.missing })) });\n}\nreturn [{ json: Object.assign({}, inp, { routing: out }) }];\n",
+        "language": "javaScript"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "cd143f8f-9364-4833-abd6-cd81f9b25fb6",
+      "name": "Render CRM block",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1100,
+        110
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst d = $input.first().json;\nconst stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');\nconst L = [];\nL.push('<!-- model-routing-governor:start -->');\nL.push('## Stato automatico');\nL.push('');\nL.push('<!-- model-routing-governor:input=' + d.fingerprint + ' -->');\nL.push('');\nL.push('Punteggi: **Artificial Analysis Data API v2**. Disponibilita: la nota');\nL.push('[[03-INFRA/council-model-inventory]], che ogni macchina pubblica da se, perche');\nL.push('il workflow gira sulla VPS e i PC sono endpoint spenti.');\nL.push('');\nL.push('Rigenerato il ' + stamp + '. ' + d.aa_total + ' modelli nel catalogo AA, ' + d.catalog.length + ' invocabili sopra il pavimento, ' + d.cut.length + ' tagliati, ' + d.locals.length + ' locali.');\nL.push('Host che hanno pubblicato: ' + d.hosts.map(h => '`' + h + '`').join(', ') + '.');\nL.push('');\nL.push('Pavimento: **' + d.floor_model + '** (indice ' + d.floor + '). Un modello di riferimento,');\nL.push('non una soglia scelta a mano: costa quasi nulla, quindi accettare qualcosa di');\nL.push('peggiore per risparmiare su una cifra già nulla non ha senso.');\nif (d.unmatched && d.unmatched.length) {\n  L.push('');\n  L.push('Esposti dai CLI ma assenti da AA, quindi non valutabili: ' + d.unmatched.map(u => '`' + u + '`').join(', ') + '.');\n}\nL.push('');\nL.push('### Catalogo disponibile');\nL.push('');\nL.push('| Modello | CLI | $ blended 3:1 | AA index | tok/s |');\nL.push('|---|---|---:|---:|---:|');\nfor (const m of d.catalog) L.push('| ' + m.name + ' | ' + m.cli + ' | $' + m.price + ' | ' + m.idx + ' | ' + (Math.round(m.tps || 0) || '--') + ' |');\nif (d.locals.length) {\n  L.push('');\n  L.push('Locali, fuori classifica perche il loro valore non e la capacita ma che il');\n  L.push('dato non esce: ' + d.locals.map(m => '`' + m.name + '` su `' + m.host + '`').join(', ') + '.');\n}\nL.push('');\nL.push('### Proposta di routing per ruolo');\nL.push('');\nL.push('Proposta, non assegnazione: il seat resta una scelta umana. Il perche di ogni');\nL.push('ruolo e come scegliere il proprio in [[03-INFRA/model-routing-roles]].');\nL.push('');\nfor (const r of d.routing) {\n  L.push('#### ' + r.role.id + ' - ' + r.role.profile);\n  L.push('');\n  L.push(r.role.purpose + '.');\n  L.push('');\n  if (r.unassigned) { L.push('> **Non assegnato.** ' + r.unassigned); L.push(''); continue; }\n  L.push('| Slot | Modello | CLI | $ | Motivo |');\n  L.push('|---|---|---|---:|---|');\n  for (const p of r.picks) {\n    const note = p.missing && p.missing.length ? ' _(non misurato: ' + p.missing.join(', ') + ')_' : '';\n    L.push('| ' + p.slot + ' | ' + p.name + ' | ' + p.cli + ' | $' + p.price + ' | ' + p.why + note + ' |');\n  }\n  if (r.pool_warning) { L.push(''); L.push('> Attenzione: ' + r.pool_warning); }\n  L.push('');\n}\nL.push('<!-- model-routing-governor:end -->');\nreturn [{ json: Object.assign({}, d, { block: L.join('\\n') }) }];\n",
+        "language": "javaScript"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "ebc219f9-fb2b-4bb8-b820-cca1449ce1b5",
+      "name": "Read CRM",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "position": [
+        1320,
+        110
+      ],
+      "parameters": {
+        "tool": {
+          "__rl": true,
+          "mode": "id",
+          "value": "read_note"
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "inputMode": "json",
+        "jsonInput": "{\"note_ref\":\"04-NOW/model-cost-crm.md\"}",
+        "endpointUrl": "https://YOUR_MCP_HOST/YOUR_MCP_PATH",
+        "authentication": "bearerAuth",
+        "serverTransport": "httpStreamable"
+      },
+      "retryOnFail": true,
+      "typeVersion": 1
+    },
+    {
+      "id": "9ce47a62-88eb-404f-89b0-9cf3b7382997",
+      "name": "Assemble update",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1540,
+        110
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Innesta il blocco e allega l'hash letto: la scrittura e transazionale,\n// quindi una modifica concorrente la fa fallire invece di sovrascriverla.\nconst d = $('Render CRM block').first().json;\nconst crm = $input.first().json;\nconst raw = (crm.content && crm.content[0] && crm.content[0].text) || crm;\nconst payload = typeof raw === 'string' ? JSON.parse(raw) : raw;\nconst content = String(payload.full_content || payload.content || '');\nconst hash = payload.content_hash;\nif (!content) throw new Error('Lettura del CRM senza contenuto');\nif (!hash) throw new Error('Lettura del CRM senza content_hash: la scrittura non sarebbe transazionale');\nconst BEGIN = '<!-- model-routing-governor:start -->';\nconst END = '<!-- model-routing-governor:end -->';\nconst i = content.indexOf(BEGIN); const j = content.indexOf(END);\nif (i < 0 || j < 0) throw new Error('Delimitatori del blocco governato assenti nel CRM');\n// Se l'impronta del catalogo non cambia non si riscrive: evita una scrittura\n// a settimana che dice sempre la stessa cosa.\nconst prev = content.match(/<!-- model-routing-governor:input=([0-9a-f]+) -->/);\nif (prev && prev[1] === d.fingerprint) return [];\nconst updated = content.slice(0, i) + d.block + content.slice(j + END.length);\nreturn [{ json: { content: updated, expected_hash: hash, fingerprint: d.fingerprint, previous_fingerprint: prev ? prev[1] : null, catalog_count: d.catalog.length, assigned: d.routing.filter(r => !r.unassigned).length, unassigned: d.routing.filter(r => r.unassigned).map(r => r.role.id) } }];\n",
+        "language": "javaScript"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "2dde72d8-6bf1-4d06-9ef4-39beb5ecdc7a",
+      "name": "Update CRM transactionally",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "position": [
+        1760,
+        110
+      ],
+      "parameters": {
+        "tool": {
+          "__rl": true,
+          "mode": "id",
+          "value": "update_note"
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "inputMode": "json",
+        "jsonInput": "={{ { note_ref: \"04-NOW/model-cost-crm.md\", content: $json.content, expected_hash: $json.expected_hash, message: \"governor: rigenera la matrice di routing dai dati AA\" } }}",
+        "endpointUrl": "https://YOUR_MCP_HOST/YOUR_MCP_PATH",
+        "authentication": "bearerAuth",
+        "serverTransport": "httpStreamable"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "30b53f10-3cd6-4824-b1f2-b8c1e3bb135d",
+      "name": "Aggiorna ora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        0,
+        220
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Ogni settimana": {
+      "main": [
+        [
+          {
+            "node": "Read host inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read host inventory": {
+      "main": [
+        [
+          {
+            "node": "Fetch AA catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch AA catalog": {
+      "main": [
+        [
+          {
+            "node": "Build catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build catalog": {
+      "main": [
+        [
+          {
+            "node": "Route roles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route roles": {
+      "main": [
+        [
+          {
+            "node": "Render CRM block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render CRM block": {
+      "main": [
+        [
+          {
+            "node": "Read CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CRM": {
+      "main": [
+        [
+          {
+            "node": "Assemble update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble update": {
+      "main": [
+        [
+          {
+            "node": "Update CRM transactionally",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggiorna ora": {
+      "main": [
+        [
+          {
+            "node": "Read host inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "active": false
+}
