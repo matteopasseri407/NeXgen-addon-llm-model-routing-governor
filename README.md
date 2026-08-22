@@ -6,6 +6,12 @@ It reads what each coding CLI can actually invoke, joins that against a third-pa
 
 Ten nodes, no LLM in the decision path, and the write is transactional.
 
+## Optional add-on for NeXgen Engine
+
+This repository is an **optional module for [NeXgen Engine](https://github.com/matteopasseri407/NeXgen-Engine)**, recommended when you run several model providers at once (Claude, Codex, AGY, OpenCode Go, Zen, Ollama...) and need the "which model for which job" answer to track a moving catalog by itself.
+
+The engine is fully functional without it — the council simply stays inert without a routing document. With the add-on installed, the engine consumes the routed table directly: `council propose` reads the block this workflow maintains and proposes the current per-role candidates against your local seats (see the *Everything you need to run it* section).
+
 ---
 
 ## The problem it solves
@@ -171,7 +177,7 @@ candidates appear in `council propose`, verified against your local seats.
 
 ## Sintesi in italiano
 
-Workflow n8n che tiene aggiornata una tabella di routing su nove ruoli, ogni 12 ore, senza che nessuno mantenga una lista a mano.
+Modulo **opzionale per NeXgen Engine**, consigliato a chi usa piu' provider insieme: un workflow n8n che tiene aggiornata una tabella di routing su nove ruoli, ogni 12 ore, senza che nessuno mantenga una lista a mano. Il motore funziona anche senza; con il modulo, il council legge la tabella direttamente (`decision_file`).
 
 L'inventario viaggia **dai PC verso il server**, non il contrario: il workflow gira su una VPS e le macchine con i CLI sono endpoint spenti quasi sempre, quindi ognuna pubblica cosa sa invocare in una nota del vault e la VPS legge quella.
 
