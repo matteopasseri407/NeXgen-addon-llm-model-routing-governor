@@ -1,6 +1,6 @@
 # LLM Model Routing Governor
 
-An n8n workflow that keeps a nine-role model routing table current, weekly, without anyone maintaining a list.
+An n8n workflow that keeps a nine-role model routing table current, every 12 hours, without anyone maintaining a list.
 
 It reads what each coding CLI can actually invoke, joins that against a third-party benchmark API, cuts everything below a reference model, and picks a primary plus two fallbacks per role — each on a different billing pool, so one exhausted quota cannot take out the whole route.
 
@@ -21,7 +21,7 @@ CLIs on laptops/desktops          →  a note in a Git-backed vault
 (opencode, agy, codex, claude,       (each machine publishes its own block)
  ollama — often powered off)
                                           ↓
-                        VPS, weekly:  read the note via MCP
+                        VPS, every 12 hours:  read the note via MCP
                                       +  benchmark API (590 models)
                                       →  floor
                                       →  per-role profiles
@@ -96,7 +96,7 @@ The lesson is not any single fix. It is that a scoring function looks right unti
 
 **The write is transactional.** The target document is read for its content hash; that hash travels with the update. A concurrent edit makes the write fail rather than silently overwrite someone else's change.
 
-**Nothing is rewritten when nothing changed.** The catalog is fingerprinted; an unchanged fingerprint ends the run before the write. A weekly schedule would otherwise produce a commit every week saying the same thing.
+**Nothing is rewritten when nothing changed.** The catalog is fingerprinted; an unchanged fingerprint ends the run before the write. A recurring schedule would otherwise produce a commit every run saying the same thing.
 
 **The decision path contains no LLM.** The version this replaced had a model propose the assignments, with an allow-list to catch invented names. Once the benchmarks became structured and the per-role tests explicit, the model had nothing left to add except cost and a hallucination surface. Removing it made the system better — the interesting change here is a deletion.
 
@@ -117,7 +117,7 @@ The first failure is the reason the test harness in this repository extracts the
 ## What's in here
 
 ```
-workflows/model-routing-governor-demo.json   the workflow, importable (12 nodes, v4.15 logic)
+workflows/model-routing-governor-demo.json   the workflow, importable (12 nodes, v4.16 logic)
 lib/                                          scoring logic exactly as deployed (extracted from the workflow)
 test/e2e.js                                   runs the deployed code on real inputs
 scripts/governor-publish-inventory.py         per-host publisher of the model inventory (Python 3)
@@ -171,7 +171,7 @@ candidates appear in `council propose`, verified against your local seats.
 
 ## Sintesi in italiano
 
-Workflow n8n che tiene aggiornata una tabella di routing su nove ruoli, una volta a settimana, senza che nessuno mantenga una lista a mano.
+Workflow n8n che tiene aggiornata una tabella di routing su nove ruoli, ogni 12 ore, senza che nessuno mantenga una lista a mano.
 
 L'inventario viaggia **dai PC verso il server**, non il contrario: il workflow gira su una VPS e le macchine con i CLI sono endpoint spenti quasi sempre, quindi ognuna pubblica cosa sa invocare in una nota del vault e la VPS legge quella.
 

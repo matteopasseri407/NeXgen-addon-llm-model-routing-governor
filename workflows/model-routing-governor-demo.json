@@ -153,7 +153,7 @@
  "nodes": [
   {
    "id": "48f09568-51d3-49a1-99bb-299818528fv4",
-   "name": "Ogni settimana",
+   "name": "Ogni 12 ore",
    "type": "n8n-nodes-base.scheduleTrigger",
    "position": [
     0,
@@ -163,13 +163,8 @@
     "rule": {
      "interval": [
       {
-       "field": "weeks",
-       "triggerAtDay": [
-        1
-       ],
-       "triggerAtHour": 4,
-       "weeksInterval": 1,
-       "triggerAtMinute": 30
+       "field": "hours",
+       "hoursInterval": 12
       }
      ]
     }
