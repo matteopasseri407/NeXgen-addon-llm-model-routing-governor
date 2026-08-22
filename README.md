@@ -1,4 +1,4 @@
-# LLM Model Routing Governor
+# LLM Model Routing Governor — optional add-on module for NeXgen Engine
 
 An n8n workflow that keeps a nine-role model routing table current, every 12 hours, without anyone maintaining a list.
 
@@ -8,9 +8,9 @@ Ten nodes, no LLM in the decision path, and the write is transactional.
 
 ## Optional add-on for NeXgen Engine
 
-This repository is an **optional module for [NeXgen Engine](https://github.com/matteopasseri407/NeXgen-Engine)**, recommended when you run several model providers at once (Claude, Codex, AGY, OpenCode Go, Zen, Ollama...) and need the "which model for which job" answer to track a moving catalog by itself.
+This is an optional module for [NeXgen Engine](https://github.com/matteopasseri407/NeXgen-Engine), aimed at setups that run several providers at once (Claude, Codex, AGY, OpenCode Go, Zen, Ollama...). With a handful of providers the "which model for which job" question stops being one you answer once: the catalog moves, and the answer has to move with it.
 
-The engine is fully functional without it — the council simply stays inert without a routing document. With the add-on installed, the engine consumes the routed table directly: `council propose` reads the block this workflow maintains and proposes the current per-role candidates against your local seats (see the *Everything you need to run it* section).
+The engine runs fine without this module. The council simply has no routing document to show, and nothing else notices. Install the add-on and the engine consumes the routed table directly: `council propose` reads the block this workflow maintains and offers the current candidates per role, checked against your local seats (see *Everything you need to run it*).
 
 ---
 
@@ -177,7 +177,7 @@ candidates appear in `council propose`, verified against your local seats.
 
 ## Sintesi in italiano
 
-Modulo **opzionale per NeXgen Engine**, consigliato a chi usa piu' provider insieme: un workflow n8n che tiene aggiornata una tabella di routing su nove ruoli, ogni 12 ore, senza che nessuno mantenga una lista a mano. Il motore funziona anche senza; con il modulo, il council legge la tabella direttamente (`decision_file`).
+E' un modulo **opzionale per NeXgen Engine**, pensato per chi usa piu' provider insieme. Un workflow n8n tiene aggiornata la tabella di routing dei modelli su nove ruoli, ogni 12 ore, senza liste a mano. Il motore funziona anche senza il modulo; con il modulo, il council legge la tabella direttamente tramite `decision_file`.
 
 L'inventario viaggia **dai PC verso il server**, non il contrario: il workflow gira su una VPS e le macchine con i CLI sono endpoint spenti quasi sempre, quindi ognuna pubblica cosa sa invocare in una nota del vault e la VPS legge quella.
 
