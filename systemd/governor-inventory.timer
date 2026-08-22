@@ -1,0 +1,15 @@
+[Unit]
+Description=Inventario modelli: pubblicazione periodica
+
+[Timer]
+# Il governor gira lunedi 04:30. L'inventario parte a OGNI accensione della
+# macchina (OnBootSec), cosi' la nota e' fresca appena il PC torna su, e
+# di nuovo ogni giorno (OnCalendar) per i PC accesi di continuo. Se il PC era
+# spento all'orario previsto, Persistent recupera il giro all'accensione.
+OnBootSec=5min
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

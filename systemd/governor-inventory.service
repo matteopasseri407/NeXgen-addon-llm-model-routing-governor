@@ -1,0 +1,17 @@
+[Unit]
+Description=Pubblica nel vault l'inventario modelli di questo host
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Il PATH di systemd NON è quello della shell di login: manca ~/.opencode/bin,
+# e senza opencode il probe pubblicava un inventario privo di quel canale.
+# Il governor esclude Go se nessun host dichiara `opencode`, quindi il canale
+# principale sarebbe sparito in silenzio.
+Environment=PATH=%h/.opencode/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/python3 %h/03-INFRA/governor-publish-inventory.py --write --push
+WorkingDirectory=%h/KnowledgeVault
+TimeoutStartSec=300
+
+[Install]
+WantedBy=timers.target

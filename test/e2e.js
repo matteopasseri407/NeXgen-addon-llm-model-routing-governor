@@ -3,7 +3,8 @@
 const fs = require('fs');
 const vm = require('vm');
 
-const wf = JSON.parse(fs.readFileSync('deployed.json', 'utf8')).workflow;
+const raw = JSON.parse(fs.readFileSync(fs.existsSync('deployed.json') ? 'deployed.json' : 'workflows/model-routing-governor-demo.json', 'utf8'));
+const wf = raw.workflow || raw;
 const codeOf = name => wf.nodes.find(n => n.name === name).parameters.jsCode;
 
 // --- input reali -------------------------------------------------------------

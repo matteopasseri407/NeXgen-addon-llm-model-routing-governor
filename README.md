@@ -117,18 +117,51 @@ The first failure is the reason the test harness in this repository extracts the
 ## What's in here
 
 ```
-workflows/model-routing-governor-demo.json   the workflow, importable
-lib/                                          the scoring logic, runnable standalone
+workflows/model-routing-governor-demo.json   the workflow, importable (12 nodes, v4.15 logic)
+lib/                                          scoring logic exactly as deployed (extracted from the workflow)
 test/e2e.js                                   runs the deployed code on real inputs
+scripts/governor-publish-inventory.py         per-host publisher of the model inventory (Python 3)
+systemd/                                      timer + service that run the publisher at boot and daily
 ```
 
-To import, point the two MCP placeholders at your own server and supply a benchmark API key as a header credential:
+`lib/` is not a second implementation: both files are the exact `jsCode` of the
+workflow's Code nodes, so the readable copy can never drift from what runs.
+
+## Everything you need to run it
+
+**1. The workflow** — import it, then replace the two placeholders with your own:
 
 ```
 n8n → Workflows → Import from File → workflows/model-routing-governor-demo.json
 ```
 
-The schedule ships disabled, so importing cannot start a job against your accounts.
+- The `Read host inventory`, `Read CRM` and `Update CRM transactionally` MCP
+  nodes point at `https://<your-vault-library-mcp-endpoint>/mcp`: put your
+  vault-library MCP server URL there. The note paths they read and write are
+  `03-INFRA/council-model-inventory.md` (per-host inventories) and
+  `04-NOW/model-cost-crm.md` (the routed table).
+- Create two credentials with these exact names: `Vault Library MCP`
+  (HTTP Bearer Auth, for the MCP server) and `Artificial Analysis`
+  (HTTP Header Auth, `x-api-key`, your benchmark API key).
+- The schedule ships disabled: enable it only after a manual test run.
+
+**2. The per-host publisher** — each machine that owns the CLIs publishes what
+it can invoke; the workflow reads the note, never the machines:
+
+```
+mkdir -p ~/03-INFRA && cp scripts/governor-publish-inventory.py ~/03-INFRA/
+cp systemd/governor-inventory.* ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now governor-inventory.timer
+```
+
+The publisher commits and pushes the note to `$KNOWLEDGE_VAULT_REMOTE`
+(default `origin`). At boot (5 min in) and daily it re-probes opencode, agy,
+codex, claude and ollama, and rewrites only this host's block of the note.
+
+**3. The council (optional)** — the routing table is a proposal, not an
+assignment. The NeXgen Engine council reads it: set its
+`seats.yaml` `routing.decision_file` to the governed note and the per-role
+candidates appear in `council propose`, verified against your local seats.
 
 ## What this is not
 
