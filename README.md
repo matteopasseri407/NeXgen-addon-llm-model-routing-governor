@@ -1,10 +1,10 @@
 # LLM Model Routing Governor — optional add-on module for NeXgen Engine
 
-An n8n workflow that keeps a nine-role model routing table current, every 12 hours, without anyone maintaining a list.
+An n8n workflow that keeps a ten-role model routing table current, every 12 hours, without anyone maintaining a list.
 
-It reads what each coding CLI can actually invoke, joins that against a third-party benchmark API, cuts everything below a reference model, and picks a primary plus two fallbacks per role — each on a different billing pool, so one exhausted quota cannot take out the whole route.
+It reads what each coding CLI can actually invoke, joins that against a third-party benchmark API, evaluates models on the benchmarks for each role, and picks one candidate per available prepaid billing pool. Free and paid emergency channels follow those candidates.
 
-Ten nodes, no LLM in the decision path, and the write is transactional.
+Twelve nodes, no LLM in the decision path, and the write is transactional.
 
 ## Optional add-on for NeXgen Engine
 
@@ -29,7 +29,6 @@ CLIs on laptops/desktops          →  a note in a Git-backed vault
                                           ↓
                         VPS, every 12 hours:  read the note via MCP
                                       +  benchmark API (590 models)
-                                      →  floor
                                       →  per-role profiles
                                       →  transactional write
 ```
@@ -49,20 +48,13 @@ All four cloud channels are introspectable, so no list is maintained by hand:
 
 The version this replaced kept a hand-written list instead, and that list claimed a model the channel had already stopped serving. A list maintained by hand describes the past.
 
-## The floor is a model, not a number
+## Evaluation by role
 
-Everything scoring below a **reference model** is cut. The reference is the cheapest model that is already good enough — if it costs almost nothing, accepting something worse to save on an already-negligible amount buys nothing.
+Each role evaluates the models on the measurements for that work.
+An aggregate index does not exclude a model before its role-specific measurements are considered.
+Local models serve the Privacy role separately, because that role requires data to stay on the machine.
 
-Two consequences worth the design:
-
-- The threshold **updates itself**. When the vendor refreshes the reference model's build, the floor rises and more models drop out, with no edit anywhere.
-- It cannot exclude itself, which makes the rule stable rather than circular.
-
-Local models are floored separately against a local reference, because a local model's value is not its ranking — it is that the data never leaves the machine.
-
-The floor applies to the three chosen slots but **not** to the emergency tier, where the question is not "is this the best" but "is this better than nothing".
-
-## Nine roles, each with its own tests and its own cost policy
+## Ten roles, each with its own tests and its own cost policy
 
 One weighted formula for every role does not survive contact with reality: choosing a model for an architecture decision and choosing one for repetitive triage are different questions, not the same question with the weights nudged.
 
@@ -73,6 +65,8 @@ So each role declares which benchmarks represent its work, and which of three co
 | **quality-first** | cost does not enter the calculation at all | roles where a mistake costs hours, not tokens |
 | **ratio** | capability per unit cost — an actual ratio, not a weighted sum | medium-difficulty, high-volume work |
 | **cheap-first** | cheapest first, quality only as tiebreak — two ordered keys | easy repetitive work |
+
+The routing code also declares empirical penalties for specific model and role pairs. These are maintained assumptions, separate from the fetched measurements.
 
 Roles are matched to benchmarks by what the work actually is: long-context reasoning for architecture, agentic tool-use for workflow building, a coding index for day-to-day patches, terminal-task success for infrastructure, instruction-following for bulk transforms. Where no relevant benchmark exists — front-end work, prose — the role falls back to declared priors, and the output says so per row instead of implying a measurement that isn't there.
 
@@ -102,15 +96,15 @@ The lesson is not any single fix. It is that a scoring function looks right unti
 
 **The write is transactional.** The target document is read for its content hash; that hash travels with the update. A concurrent edit makes the write fail rather than silently overwrite someone else's change.
 
-**Nothing is rewritten when nothing changed.** The catalog is fingerprinted; an unchanged fingerprint ends the run before the write. A recurring schedule would otherwise produce a commit every run saying the same thing.
+**Nothing is rewritten when nothing changed.** The fingerprint covers role benchmarks, throughput, cost weights, context limits, executable model identifiers and inventory metadata. An unchanged fingerprint ends the run before the write. A recurring schedule would otherwise produce a commit every run saying the same thing.
 
 **The decision path contains no LLM.** The version this replaced had a model propose the assignments, with an allow-list to catch invented names. Once the benchmarks became structured and the per-role tests explicit, the model had nothing left to add except cost and a hallucination surface. Removing it made the system better — the interesting change here is a deletion.
 
 Reads are retried; both outbound fetches are time-boxed. The non-idempotent write is deliberately **not** retried: the hash guard would make a second attempt fail even after the first succeeded, reporting an error for a completed write.
 
-## Verified end to end
+## Historical live checks
 
-Three executions against the real API and the real vault:
+Three executions of an earlier version against the real API and the real vault:
 
 | Run | Outcome |
 | --- | --- |
@@ -118,20 +112,22 @@ Three executions against the real API and the real vault:
 | 2 | **wrote** the table: 590 models in, 15 above the floor, 18 cut |
 | 3 | **succeeded without writing** — the write node does not appear in the execution data at all, because the fingerprint guard ended the run first |
 
-The first failure is the reason the test harness in this repository extracts the deployed node code *from the database* and runs it against real inputs, rather than testing a local copy. The original harness had simulated the MCP reply in the wrong shape and so could not have caught it.
+The first failure came from a test harness that simulated the MCP reply in the wrong shape. The current harness runs the shipped Code nodes on captured node payloads, preserving the MCP envelope.
 
 ## What's in here
 
 ```
-workflows/model-routing-governor-demo.json   the workflow, importable (12 nodes, v4.16 logic)
-lib/                                          scoring logic exactly as deployed (extracted from the workflow)
-test/e2e.js                                   runs the deployed code on real inputs
+workflows/model-routing-governor-demo.json   the workflow, importable (12 nodes, v4.21 logic)
+lib/                                          Build and Route Code nodes extracted from the public workflow
+test/e2e.js                                   runs shipped Code nodes on captured inputs
+test/test_fingerprint.py                      synthetic fingerprint regression checks
 scripts/governor-publish-inventory.py         per-host publisher of the model inventory (Python 3)
 systemd/                                      timer + service that run the publisher at boot and daily
 ```
 
-`lib/` is not a second implementation: both files are the exact `jsCode` of the
-workflow's Code nodes, so the readable copy can never drift from what runs.
+`lib/inventory.js` and `lib/roles.js` contain the public workflow's Build and
+Route code. Keep these extracts in step with the workflow when editing it.
+Private field observations are omitted from the public Render node.
 
 ## Everything you need to run it
 
@@ -190,3 +186,14 @@ La parte che vale più del codice sono i quattro errori di normalizzazione docum
 ## License
 
 PolyForm Noncommercial 1.0.0 — see [LICENSE](LICENSE).
+
+## Regression checks
+
+Run `python3 test/test_fingerprint.py` with Python 3 and Node.js installed.
+It tests the shipped Code nodes without network calls, credentials or Vault writes.
+Benchmark, throughput, cost-weight and context changes must trigger an update; unchanged inputs must produce none.
+
+For `node test/e2e.js`, place captured node JSON in a separate working directory: `real-inventory-note.json`, `aa-api.json`, `zen-api.json`, `models-dev.json` and `real-crm-note.json`.
+An optional `reference-matrix.json` contains the baseline Route node's `routing` array.
+These captures may contain private data and must stay outside this repository.
+The harness prints the result without saving a transcript.
