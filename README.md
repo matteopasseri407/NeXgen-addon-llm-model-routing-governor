@@ -117,7 +117,7 @@ The first failure came from a test harness that simulated the MCP reply in the w
 ## What's in here
 
 ```
-workflows/model-routing-governor-demo.json   the workflow, importable (12 nodes, v4.21 logic)
+workflows/model-routing-governor-demo.json   the workflow, importable (12 nodes, v4.31 logic)
 lib/                                          Build and Route Code nodes extracted from the public workflow
 test/e2e.js                                   runs shipped Code nodes on captured inputs
 test/test_fingerprint.py                      synthetic fingerprint regression checks
