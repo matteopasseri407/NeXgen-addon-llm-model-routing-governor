@@ -16,7 +16,12 @@ quella senza no. Un inventario unico mentirebbe su entrambe.
 Questo script NON incrocia con Artificial Analysis: pubblica solo cosa c'e'.
 Il punteggio lo mette il workflow, che ha la chiave API.
 
-Il remote di push si prende da KNOWLEDGE_VAULT_REMOTE (default: origin).
+Il remote di push si risolve come fa l'engine (`nexgen_core/git_ops.resolve_remotes`):
+`KNOWLEDGE_VAULT_REMOTE` se impostata, poi `authoritative_remote` dichiarato in
+`03-INFRA/agent-universal-layer/sync/remotes.yaml`, poi `origin` come ultima
+risorsa. Se il remoto autorevole e' `local` o `none` lo script committa e NON
+spinge: ripiegare su `origin` pubblicherebbe il vault sul repo pubblico che
+quella dichiarazione esiste per proteggere.
 """
 import argparse
 import json
@@ -274,11 +279,40 @@ di [[04-NOW/model-cost-crm]].
 """
 
 
+def push_remote():
+    """Il remote che accetta scritture canoniche su questo clone.
+
+    Ordine: `KNOWLEDGE_VAULT_REMOTE` (esplicito), poi `authoritative_remote`
+    dichiarato in `sync/remotes.yaml`, poi `origin` come ultima risorsa. E' la
+    precedenza di `nexgen_core/git_ops.py:resolve_remotes`: senza, ogni
+    chiamante che omette la variabile (il boot notifier lo fa) spinge sul repo
+    pubblico dell'engine e lascia il commit orfano.
+
+    `local` e `none` escono cosi' come sono: sono una dichiarazione, non un
+    nome da sostituire, e chi chiama deve rifiutarsi di spingere.
+    """
+    explicit = os.environ.get("KNOWLEDGE_VAULT_REMOTE")
+    if explicit and explicit.strip():
+        return explicit.strip()
+
+    declared = VAULT / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml"
+    try:
+        for line in declared.read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip()
+            if line.startswith("authoritative_remote:"):
+                value = line.split(":", 1)[1].strip().strip("'\"")
+                if value:
+                    return value
+    except OSError:  # nexgen: allow reason="senza remotes.yaml il clone non dichiara nulla: vale il default documentato"
+        pass
+    return "origin"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--push", action="store_true",
-                    help="committa e spinge sul remote KNOWLEDGE_VAULT_REMOTE")
+                    help="committa e spinge sul remote autorevole dichiarato")
     ap.add_argument("--stamp", default=None,
                     help="data del rilevamento (default: oggi via date)")
     args = ap.parse_args()
@@ -312,17 +346,26 @@ def main():
     print(f"scritto: {NOTE}", file=sys.stderr)
 
     if args.push:
+        remote = push_remote()
         rel = NOTE.relative_to(VAULT)
         for cmd in (["git", "add", str(rel)],
                     ["git", "commit", "-q", "-m",
-                     f"inventory({HOST}): aggiorna i modelli invocabili"],
-                    ["git", "push", "-q", os.environ.get("KNOWLEDGE_VAULT_REMOTE", "origin"), "HEAD"]):
+                     f"inventory({HOST}): aggiorna i modelli invocabili"]):
             p = subprocess.run(cmd, cwd=VAULT, capture_output=True, text=True, timeout=TIMEOUT)
             if p.returncode != 0 and "nothing to commit" not in p.stdout:
                 print(f"! {' '.join(cmd)} -> {p.stderr.strip() or p.stdout.strip()}",
                       file=sys.stderr)
                 return
-        print("spinto su " + os.environ.get("KNOWLEDGE_VAULT_REMOTE", "origin"), file=sys.stderr)
+        if remote in ("local", "none"):
+            print(f"! push saltato: il remote autorevole dichiarato e' '{remote}', "
+                  "la nota resta committata in locale", file=sys.stderr)
+            return
+        cmd = ["git", "push", "-q", remote, "HEAD"]
+        p = subprocess.run(cmd, cwd=VAULT, capture_output=True, text=True, timeout=TIMEOUT)
+        if p.returncode != 0:
+            print(f"! {' '.join(cmd)} -> {p.stderr.strip() or p.stdout.strip()}", file=sys.stderr)
+            return
+        print("spinto su " + remote, file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -156,9 +156,13 @@ cp systemd/governor-inventory.* ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now governor-inventory.timer
 ```
 
-The publisher commits and pushes the note to `$KNOWLEDGE_VAULT_REMOTE`
-(default `origin`). At boot (5 min in) and daily it re-probes opencode, agy,
-codex, claude and ollama, and rewrites only this host's block of the note.
+The publisher commits the note and pushes it to the authoritative remote this
+clone declares: `$KNOWLEDGE_VAULT_REMOTE` when it is set, otherwise
+`authoritative_remote` from `03-INFRA/agent-universal-layer/sync/remotes.yaml`,
+otherwise `origin`. When that declaration is `local` or `none` it commits and
+does not push, rather than falling back to a remote the vault does not
+authorize. At boot (5 min in) and daily it re-probes opencode, agy, codex,
+claude and ollama, and rewrites only this host's block of the note.
 
 **3. The council (optional)** — the routing table is a proposal, not an
 assignment. The NeXgen Engine council reads it: set its
